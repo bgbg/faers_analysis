@@ -10,26 +10,39 @@ from src.utils import Quarter, generate_quarters
 
 logger = logging.getLogger("FAERS")
 
-
-def quarter_urls(quarter):
-    ret = []
-    year = quarter.year
-    yearquarter = str(quarter)
-    what = [
+WHAT = [
         "demo",
         "drug",
         "reac",
         "outc",
         # "indi",
-        "ther",
-    ]
-    for w in what:
+        "ther"]
+
+def quarter_urls(quarter):
+    ret = []
+    year = quarter.year
+    yearquarter = str(quarter)
+    for w in WHAT:
         # tmplt = f"https://data.nber.org/fda/faers/{year}/csv/{w}{yearquarter}.csv.zip"
         # tmplt = f"https://data.nber.org/fda/faers/{year}/{w}{yearquarter}.csv.zip"
-        tmplt = f"https://data.nber.org/fda/faers/{year}/csv/{w}{yearquarter}.csv.zip"
+        if year <= 2018:
+            tmplt = (
+                f"https://data.nber.org/fda/faers/{year}/{w}{yearquarter}.csv.zip"
+            )
+        else:
+            tmplt = f"https://data.nber.org/fda/faers/{year}/csv/{w}{yearquarter}.csv.zip"
         ret.append(tmplt)
     return ret
 
+def get_expected_filenames(year_q_from, year_q_to, dir_out):
+    quarters_to_process = generate_quarters(Quarter(year_q_from), Quarter(year_q_to))
+    expected_files = []
+    for q in quarters_to_process:
+        for w in WHAT:
+            yearquarter=str(q)
+            filename = f"{w}{yearquarter}.csv.zip"
+            expected_files.append(os.path.join(dir_out, filename))
+    return expected_files
 
 def download_url(url, dir_out):
     fn_out = os.path.split(url)[-1]
