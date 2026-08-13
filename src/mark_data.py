@@ -55,7 +55,7 @@ def handle_duplicates_within_case(df, cols_boolean, cols_rest):
 def handle_duplicates(df):
     cols_boolean = [c for c in df.columns if df.dtypes[c] == np.dtype(bool)]
     cols_rest = [c for c in df.columns if (c not in cols_boolean) and (c != "q")]
-    rows_per_caseid = pd.value_counts(df["caseid"])
+    rows_per_caseid = df["caseid"].value_counts()
     df["rows_per_caseid"] = rows_per_caseid.reindex(df.caseid).values
     sel = df.rows_per_caseid == 1
     already_good = df.loc[sel]
