@@ -92,6 +92,13 @@ def mark_data(df_drug, df_reac, df_demo, config_items):
         reacted = f"reacted {config.name}"
         df_merged[reacted] = df_merged[reaction_columns].any(axis=1)
         cols_to_collect.append(reacted)
+        if config.exclusions:
+            exclusion_columns = [
+                f"reaction {reaction}" for reaction in config.exclusions
+            ]
+            excluded = f"excluded {config.name}"
+            df_merged[excluded] = df_merged[exclusion_columns].any(axis=1)
+            cols_to_collect.append(excluded)
     df_merged = df_merged[cols_to_collect].reset_index().sort_values(["caseid", "q"])
     logger.info(f"Handling duplicates of {len(df_merged):,d} rows")
     ret = handle_duplicates(df_merged)
@@ -237,6 +244,8 @@ def main(
             if config.control is not None:
                 drug_names.update(set(config.control))
             reaction_types.update(set(config.reactions))
+            if config.exclusions:
+                reaction_types.update(set(config.exclusions))
         print(
             f"Will analyze {len(drug_names)} drugs and {len(reaction_types)} reactions"
         )

@@ -129,12 +129,57 @@ class ContingencyMatrix:
         self.tbl.n += other.tbl.n
         return self
 
+    EXCLUSION_SEMANTICS_ELIGIBILITY = "eligibility"
+    EXCLUSION_SEMANTICS_OUTCOME = "outcome"
+    _EXCLUSION_SEMANTICS = (
+        EXCLUSION_SEMANTICS_ELIGIBILITY,
+        EXCLUSION_SEMANTICS_OUTCOME,
+    )
+
     @classmethod
-    def from_results_table(cls, data, config):
-        exposure = data[f"exposed {config.name}"]
+    def from_results_table(
+        cls, data, config, exclusion_semantics=EXCLUSION_SEMANTICS_ELIGIBILITY
+    ):
+        """Build the 2x2 exposure/outcome table for one question.
+
+        A case is counted iff it reports >= 1 PT in the inclusion set `I`
+        (``config.reactions``) and 0 PTs in the exclusion set `E`
+        (``config.exclusions``) -- lab issue #4, R23. That specification is
+        ambiguous between two designs (methodology entry 31, D4), both
+        selectable via `exclusion_semantics`:
+
+        - "eligibility" (default / entry 31's "beta"): a case reporting any
+          `E` term is removed from the analysis entirely, from the exposed
+          and the unexposed arm alike.
+        - "outcome" (entry 31's "alpha"): such a case stays in the table
+          and is forced outcome-negative.
+
+        When `config.exclusions` is empty/None -- i.e. `E` is empty -- both
+        semantics are no-ops and this reproduces the pre-#4 pipeline
+        exactly (R24).
+        """
+        if exclusion_semantics not in cls._EXCLUSION_SEMANTICS:
+            raise ValueError(
+                f"exclusion_semantics must be one of {cls._EXCLUSION_SEMANTICS}, "
+                f"got {exclusion_semantics!r}"
+            )
+        exposure = data[f"exposed {config.name}"].copy()
         exposure.name = "exposure"
-        outcome = data[f"reacted {config.name}"]
+        outcome = data[f"reacted {config.name}"].copy()
         outcome.name = "outcome"
+
+        excluded_col = f"excluded {config.name}"
+        if excluded_col in data.columns:
+            excluded = data[excluded_col]
+            if exclusion_semantics == cls.EXCLUSION_SEMANTICS_ELIGIBILITY:
+                eligible = ~excluded
+                exposure = exposure.loc[eligible]
+                outcome = outcome.loc[eligible]
+            else:  # EXCLUSION_SEMANTICS_OUTCOME
+                outcome = outcome & ~excluded
+                outcome.name = "outcome"  # `&` between differently-named
+                # Series drops the name; crosstab/melt below rely on it.
+
         crosstab = (
             pd.crosstab(exposure, outcome)
             .reindex([False, True], axis=0, fill_value=0)
@@ -197,11 +242,16 @@ class ContingencyMatrix:
 
 
 class QuestionConfig:
-    def __init__(self, name, drugs, reactions, control):
+    def __init__(self, name, drugs, reactions, control, exclusions=None):
         self.name = name
         self.drugs = drugs
         self.reactions = reactions
         self.control = control
+        # `exclusions` is the exclusion term set E of lab issue #4 (R23): a
+        # set of PTs on the *reaction* axis, distinct from the inclusion set
+        # `reactions` (I). None/empty means the question has no exclusion
+        # set, which must reproduce the pre-#4 pipeline exactly (R24).
+        self.exclusions = exclusions
 
     @classmethod
     def load_config_items(cls, dir_config):
@@ -234,7 +284,17 @@ class QuestionConfig:
             control = [cls.normalize_drug_name(d) for d in config["control"]]
         else:
             control = None
-        return QuestionConfig(name, drugs=drugs, reactions=reactions, control=control)
+        if "exclusion" in config:
+            exclusions = [cls.normalize_reaction_name(r) for r in config["exclusion"]]
+        else:
+            exclusions = None
+        return QuestionConfig(
+            name,
+            drugs=drugs,
+            reactions=reactions,
+            control=control,
+            exclusions=exclusions,
+        )
 
     @classmethod
     def configs_from_excel_file(cls, fn):
@@ -244,7 +304,7 @@ class QuestionConfig:
         for sheetname in xl.sheet_names:
             tbl = xl.parse(sheetname)
             tbl.columns = [c.lower().strip() for c in tbl.columns]
-            if len(tbl.columns) > 3:
+            if len(tbl.columns) > 4:
                 logger.warning(
                     f"Skipping {fn} sheet {sheetname} that has {len(tbl.columns)} columns"
                 )
@@ -253,18 +313,26 @@ class QuestionConfig:
             reactions = tbl["reaction"].dropna().tolist()
             drugs = [cls.normalize_drug_name(d) for d in drugs]
             reactions = [cls.normalize_reaction_name(r) for r in reactions]
-            if len(tbl.columns) == 3:
+            if "control" in tbl.columns:
                 control = [
                     cls.normalize_drug_name(d) for d in tbl["control"].dropna().tolist()
                 ]
             else:
                 control = None
+            if "exclusion" in tbl.columns:
+                exclusions = [
+                    cls.normalize_reaction_name(r)
+                    for r in tbl["exclusion"].dropna().tolist()
+                ]
+            else:
+                exclusions = None
             ret.append(
                 QuestionConfig(
                     f"{name} - {sheetname}",
                     drugs=drugs,
                     reactions=reactions,
                     control=control,
+                    exclusions=exclusions,
                 )
             )
         return ret
